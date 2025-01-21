@@ -1,0 +1,134 @@
+from flask import Blueprint, request, jsonify
+import joblib
+import numpy as np
+import os
+import logging
+from datetime import datetime
+
+prediction_bp = Blueprint('prediction', __name__, url_prefix='/details')
+MODEL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), r'C:\Users\Asus\Desktop\disaster-management-system\backend\ml\models')
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def load_models():
+    """Load all required models and encoder from disk."""
+    try:
+        models = {
+            'disaster_type': joblib.load(os.path.join(MODEL_DIR, 'disaster_type_model.pkl')),
+            'deaths': joblib.load(os.path.join(MODEL_DIR, 'deaths_model.pkl')),
+            'infra_loss': joblib.load(os.path.join(MODEL_DIR, 'infra_loss_model.pkl')),
+            'label_encoder': joblib.load(os.path.join(MODEL_DIR, 'label_encoder.pkl'))
+        }
+        return models
+    except Exception as e:
+        logger.error(f"Error loading models: {str(e)}")
+        raise
+
+def calculate_severity(deaths_pred, infra_loss_pred):
+    """Calculate disaster severity based on predicted deaths and infrastructure loss."""
+    # Normalize predictions to 0-1 scale
+    death_severity = min(deaths_pred / 1000, 1)  # Normalize deaths (assume max 1000)
+    infra_severity = min(infra_loss_pred / 1000000, 1)  # Normalize infrastructure loss (assume max 1M)
+    
+    # Combined severity score (0-100)
+    severity_score = ((death_severity + infra_severity) / 2) * 100
+    
+    # Severity categories
+    if severity_score < 20:
+        return "Low"
+    elif severity_score < 50:
+        return "Medium"
+    elif severity_score < 80:
+        return "High"
+    else:
+        return "Extreme"
+
+@prediction_bp.route('/', methods=['GET'])
+def get_prediction():
+    """Handle GET requests for disaster predictions with enhanced debugging."""
+    try:
+        # Log incoming request
+        logger.info(f"Received prediction request with params: {request.args}")
+        
+        # Extract query parameters
+        latitude = float(request.args.get('lat'))
+        longitude = float(request.args.get('lng'))
+        temperature_celsius = float(request.args.get('temp', 0))
+        precip_mm = float(request.args.get('precip', 0))
+
+        # Log parsed parameters
+        logger.info(f"Parsed parameters: lat={latitude}, lng={longitude}, "
+                   f"temp={temperature_celsius}, precip={precip_mm}")
+
+        # Input validation
+        if not all([latitude, longitude]):
+            logger.warning("Missing required parameters")
+            return jsonify({"error": "Missing required parameters"}), 400
+
+        # Load models
+        models = load_models()
+        logger.info("Models loaded successfully")
+
+        # Get label encoder classes
+        label_encoder = models['label_encoder']
+        logger.info(f"Available disaster types: {label_encoder.classes_}")
+
+        # Prepare input features
+        input_features = np.array([[latitude, longitude, temperature_celsius, precip_mm]])
+        logger.info(f"Prepared input features: {input_features}")
+
+        # Get prediction probabilities
+        disaster_type_probs = models['disaster_type'].predict_proba(input_features)[0]
+        
+        # Log all probabilities
+        for class_idx, prob in enumerate(disaster_type_probs):
+            class_name = label_encoder.inverse_transform([class_idx])[0]
+            logger.info(f"Probability for {class_name}: {prob:.4f}")
+
+        # Make predictions
+        disaster_type_code = models['disaster_type'].predict(input_features)[0]
+        deaths_pred = max(0, round(models['deaths'].predict(input_features)[0]))
+        infra_loss_pred = max(0, round(models['infra_loss'].predict(input_features)[0], 2))
+
+        # Log predictions
+        logger.info(f"Raw predictions - type code: {disaster_type_code}")
+        
+        # Convert disaster type code to label
+        disaster_type = label_encoder.inverse_transform([disaster_type_code])[0]
+        logger.info(f"Predicted disaster type: {disaster_type}")
+
+        # Calculate severity
+        severity = calculate_severity(deaths_pred, infra_loss_pred)
+
+        # Prepare response
+        prediction_result = {
+            "prediction": {
+                "disaster_type": disaster_type,
+                "disaster_probabilities": {
+                    label_encoder.inverse_transform([i])[0]: float(prob)
+                    for i, prob in enumerate(disaster_type_probs)
+                },
+                "severity": severity,
+                "estimated_deaths": deaths_pred,
+                "estimated_infrastructure_loss_usd": infra_loss_pred
+            },
+            "location": {
+                "latitude": latitude,
+                "longitude": longitude
+            },
+            "parameters": {
+                "temperature_celsius": temperature_celsius,
+                "precipitation_mm": precip_mm
+            },
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+        logger.info(f"Sending prediction response: {prediction_result}")
+        return jsonify(prediction_result), 200
+
+    except Exception as e:
+        error_msg = f"An unexpected error occurred: {str(e)}"
+        logger.exception(error_msg)
+        return jsonify({"error": error_msg}), 500

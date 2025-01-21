@@ -1,0 +1,55 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Base styles */
+@layer base {
+  body {
+    @apply bg-green-50 antialiased;
+  }
+}
+
+/* Custom components */
+@layer components {
+  .gradient-header {
+    @apply bg-gradient-to-b from-emerald-600 to-green-50;
+  }
+  
+  .primary-button {
+    @apply bg-emerald-600 text-white px-6 py-3 rounded-md hover:bg-emerald-700 
+    transition-colors duration-300 flex items-center gap-2;
+  }
+  
+  .secondary-button {
+    @apply border-2 border-white text-white px-6 py-3 rounded-md 
+    hover:bg-emerald-700 transition-colors duration-300;
+  }
+  
+  .feature-card {
+    @apply bg-green-50 p-8 rounded-lg shadow-md hover:shadow-lg 
+    transition-shadow duration-300;
+  }
+  
+  .disaster-card {
+    @apply flex mb-16 items-center gap-8;
+  }
+  
+  .disaster-image {
+    @apply rounded-lg shadow-xl object-cover w-full h-[400px];
+  }
+}
+
+/* Utility classes */
+@layer utilities {
+  .page-container {
+    @apply container mx-auto px-4;
+  }
+  
+  .section-title {
+    @apply text-3xl font-bold text-center mb-12 text-gray-800;
+  }
+  
+  .footer-link {
+    @apply text-green-100 hover:text-white transition-colors duration-200;
+  }
+}

@@ -1,0 +1,19 @@
+.home-page {
+    font-family: Arial, sans-serif;
+  }
+  
+  .carousel-inner img {
+    height: 100%;
+    object-fit: cover;
+  }
+  
+  .featurette-divider {
+    border-top: 1px solid #e5e5e5;
+  }
+  
+  .map-container {
+    background-color: #ddd; /* Placeholder style for map */
+    padding: 20px;
+    border-radius: 8px;
+  }
+  

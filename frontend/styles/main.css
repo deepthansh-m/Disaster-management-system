@@ -1,0 +1,40 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Your custom styles below */
+
+        /* Custom styles */
+        body {
+        @apply bg-green-50;
+        }
+
+        .gradient-header {
+        background: linear-gradient(90deg, #059669 0%, #22c55e 100%);
+        }
+
+        .transition-all {
+        transition: all 0.3s ease-in-out;
+        }
+
+        /* Additional custom styles for images */
+        .disaster-image {
+        @apply rounded-lg shadow-lg;
+        max-height: 400px;
+        object-fit: cover;
+        width: 100%;
+        }
+
+        /* Button styles */
+        .primary-button {
+        @apply bg-emerald-600 text-white px-6 py-3 rounded-md hover:bg-emerald-700 transition-colors duration-300;
+        }
+
+        .secondary-button {
+        @apply border-2 border-white text-white px-6 py-3 rounded-md hover:bg-emerald-700 transition-colors duration-300;
+        }
+
+        /* Card styles */
+        .feature-card {
+        @apply bg-green-50 p-8 rounded-lg shadow-md hover:shadow-lg transition-shadow duration-300;
+        }

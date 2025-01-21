@@ -1,0 +1,109 @@
+import React, { useRef, useState, useEffect } from "react";
+import L from "leaflet";
+import { useNavigate } from "react-router-dom";
+import 'leaflet/dist/leaflet.css'; // Import Leaflet CSS
+import icon from 'leaflet/dist/images/marker-icon.png';
+import iconShadow from 'leaflet/dist/images/marker-shadow.png';
+import { getWeatherData } from "../services/api_service"; // Correct import
+
+const MapPage = () => {
+  const mapContainerRef = useRef(null);
+  const navigate = useNavigate();
+  const mapInstanceRef = useRef(null);
+  const currentMarkerRef = useRef(null);
+
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [predictionData, setPredictionData] = useState(null);
+
+  useEffect(() => {
+    if (!mapInstanceRef.current) {
+      mapInstanceRef.current = L.map(mapContainerRef.current).setView([0, 0], 2);
+
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap contributors',
+      }).addTo(mapInstanceRef.current);
+
+      mapInstanceRef.current.on('click', handleMapClick);
+    }
+
+    return () => {
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.remove();
+        mapInstanceRef.current = null;
+      }
+    };
+  }, []);
+
+  const handleMapClick = async (event) => {
+    const { lat, lng } = event.latlng;
+    console.log('Clicked coordinates:', lat, lng);
+
+    try {
+      setIsLoading(true);
+      setError(null);
+
+      if (currentMarkerRef.current) {
+        currentMarkerRef.current.remove();
+      }
+
+      currentMarkerRef.current = L.marker([lat, lng], {
+        icon: new L.Icon({
+          iconUrl: icon,
+          shadowUrl: iconShadow,
+          iconSize: [25, 41],
+          iconAnchor: [12, 41],
+          popupAnchor: [1, -34],
+          shadowSize: [41, 41],
+        }),
+      }).addTo(mapInstanceRef.current);
+
+      const data = await getWeatherData(lat, lng);
+      setPredictionData(data);
+      // Add marker or other map updates here
+    } catch (err) {
+      setError('Failed to fetch weather data.');
+      console.error('Error fetching weather data:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+  const handleViewDetails = () => {
+    if (predictionData) {
+      const { lat, lng } = currentMarkerRef.current.getLatLng();
+      navigate(`/details?lat=${lat}&lng=${lng}`);
+    }
+  };
+
+  return (
+    <div>
+      {isLoading && <p>Loading...</p>}
+      {error && <p>{error}</p>}
+      <div ref={mapContainerRef} style={{ height: "500px" }}></div>
+      {predictionData && (
+        <div>
+          <h3>Weather Data</h3>
+          <p>Temperature: {predictionData.temperatureCelsius}°C</p>
+          <p>Precipitation: {predictionData.precipMm} mm</p>
+          <button 
+            onClick={handleViewDetails}
+            style={{
+              padding: '10px 20px',
+              backgroundColor: '#007bff',
+              color: 'white',
+              border: 'none',
+              borderRadius: '5px',
+              cursor: 'pointer',
+              marginTop: '10px'
+            }}
+          >
+            View Disaster Details
+          </button>
+          <pre>{JSON.stringify(predictionData, null, 2)}</pre>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default MapPage;

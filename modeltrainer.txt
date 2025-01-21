@@ -1,0 +1,316 @@
+# backend/ml/model_trainer.py
+
+import os
+import sys
+import pandas as pd
+import joblib
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, classification_report, r2_score
+from sklearn.preprocessing import LabelEncoder
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+import traceback
+import geopandas as gpd
+from shapely.geometry import Point
+
+def load_and_combine_data(disaster_data_path, weather_data_path):
+    """Load and combine disaster and weather data using spatial join with accurate projections."""
+    try:
+        print("Loading disaster data...")
+        disaster_data = pd.read_csv(disaster_data_path)
+        print("Disaster data shape:", disaster_data.shape)
+        print("Disaster data columns:", disaster_data.columns.tolist())
+
+        # Remove spaces from column names
+        disaster_data.columns = disaster_data.columns.str.strip()
+
+        # Rename columns
+        disaster_data.rename(columns={
+            'Disaster Type': 'disaster_type',
+            'Total Deaths': 'total_deaths',
+            "Total Damage, Adjusted ('000 US$)": 'infrastructure_loss'
+        }, inplace=True)
+
+        print("Renamed disaster data columns:", disaster_data.columns.tolist())
+
+        # Inspect date components
+        print("\nInspecting date components:")
+        print("Missing Start Year:", disaster_data['Start Year'].isna().sum())
+        print("Missing Start Month:", disaster_data['Start Month'].isna().sum())
+        print("Missing Start Day:", disaster_data['Start Day'].isna().sum())
+
+        print("\nUnique Start Years:", disaster_data['Start Year'].dropna().unique())
+        print("Unique Start Months:", disaster_data['Start Month'].dropna().unique())
+        print("Unique Start Days:", disaster_data['Start Day'].dropna().unique())
+
+        # Handle missing values without inplace=True
+        disaster_data['Start Month'] = disaster_data['Start Month'].fillna(1)
+        disaster_data['Start Day'] = disaster_data['Start Day'].fillna(1)
+        disaster_data.dropna(subset=['Start Year'], inplace=True)
+
+        # Validate date components
+        disaster_data.loc[~disaster_data['Start Month'].between(1, 12), 'Start Month'] = 1
+        disaster_data.loc[~disaster_data['Start Day'].between(1, 31), 'Start Day'] = 1
+
+        # Convert to integers
+        disaster_data['Start Year'] = disaster_data['Start Year'].astype(int)
+        disaster_data['Start Month'] = disaster_data['Start Month'].astype(int)
+        disaster_data['Start Day'] = disaster_data['Start Day'].astype(int)
+
+        # Construct date strings
+        date_strings = (
+            disaster_data['Start Year'].astype(str) + '-' +
+            disaster_data['Start Month'].astype(str).str.zfill(2) + '-' +
+            disaster_data['Start Day'].astype(str).str.zfill(2)
+        )
+
+        # Parse dates
+        disaster_data['date'] = pd.to_datetime(date_strings, format='%Y-%m-%d', errors='coerce')
+
+        # Count successful and failed parsings
+        successful_dates = disaster_data['date'].notna().sum()
+        failed_dates = disaster_data['date'].isna().sum()
+        print(f"\nSuccessfully parsed dates: {successful_dates}")
+        print(f"Failed to parse dates: {failed_dates}")
+
+        # Drop rows with invalid dates
+        disaster_data.dropna(subset=['date'], inplace=True)
+        disaster_data['date'] = disaster_data['date'].dt.normalize()
+
+        # Round coordinates to 2 decimal places (~1 km precision)
+        disaster_data['latitude'] = disaster_data['latitude'].round(2)
+        disaster_data['longitude'] = disaster_data['longitude'].round(2)
+
+        # Select necessary columns
+        disaster_data = disaster_data[['date', 'latitude', 'longitude', 'disaster_type',
+                                       'total_deaths', 'infrastructure_loss']]
+
+        # Convert to GeoDataFrame
+        disaster_gdf = gpd.GeoDataFrame(
+            disaster_data,
+            geometry=gpd.points_from_xy(disaster_data.longitude, disaster_data.latitude),
+            crs="EPSG:4326"  # Original CRS
+        )
+
+        print("\nLoading weather data...")
+        weather_data = pd.read_csv(weather_data_path)
+        print("Weather data shape:", weather_data.shape)
+        print("Weather data columns:", weather_data.columns.tolist())
+
+        # Remove spaces from column names
+        weather_data.columns = weather_data.columns.str.strip()
+
+        # Parse dates for weather data
+        weather_data['date'] = pd.to_datetime(weather_data['last_updated'], errors='coerce')
+        weather_data = weather_data[weather_data['date'].notna()]
+        weather_data['date'] = weather_data['date'].dt.normalize()
+
+        # Round coordinates to 2 decimal places
+        weather_data['latitude'] = weather_data['latitude'].round(2)
+        weather_data['longitude'] = weather_data['longitude'].round(2)
+
+        # Select necessary weather columns
+        weather_data = weather_data[['date', 'latitude', 'longitude', 'temperature_celsius', 'precip_mm']]
+
+        # Aggregate weather data by location to compute average temperature and precipitation
+        print("\nAggregating weather data by location...")
+        weather_avg = weather_data.groupby(['latitude', 'longitude']).agg({
+            'temperature_celsius': 'mean',
+            'precip_mm': 'mean'
+        }).reset_index()
+
+        print("Aggregated weather data shape:", weather_avg.shape)
+
+        # Convert to GeoDataFrame
+        weather_gdf = gpd.GeoDataFrame(
+            weather_avg,
+            geometry=gpd.points_from_xy(weather_avg.longitude, weather_avg.latitude),
+            crs="EPSG:4326"  # Original CRS
+        )
+
+        # Reproject to a projected CRS for accurate distance calculations
+        projected_crs = "EPSG:3857"
+        disaster_gdf = disaster_gdf.to_crs(projected_crs)
+        weather_gdf = weather_gdf.to_crs(projected_crs)
+
+        # Perform spatial join with a tolerance (e.g., 10 km => 10000 meters)
+        print("\nPerforming spatial join with a 10 km tolerance...")
+        combined_gdf = gpd.sjoin_nearest(
+            disaster_gdf,
+            weather_gdf,
+            how='left',
+            distance_col='distance',
+            max_distance=10000  # in meters
+        )
+
+        print("Combined data shape after spatial join:", combined_gdf.shape)
+
+        # Drop rows where no weather data was found within the tolerance
+        combined_gdf.dropna(subset=['temperature_celsius', 'precip_mm'], inplace=True)
+        print("Combined data shape after dropping NaNs:", combined_gdf.shape)
+
+        if combined_gdf.empty:
+            print("Warning: Combined dataset is empty after spatial join. Consider increasing the tolerance or verifying data coverage.")
+            sys.exit(1)
+
+        # Rename columns if necessary
+        combined_gdf.rename(columns={
+            'latitude_left': 'latitude',
+            'longitude_left': 'longitude'
+        }, inplace=True)
+
+        # Drop auxiliary columns if necessary
+        combined_gdf.drop(columns=['index_right', 'distance'], inplace=True, errors='ignore')
+
+        # Convert back to pandas DataFrame for preprocessing
+        combined_data = pd.DataFrame(combined_gdf.drop(columns='geometry'))
+
+        return combined_data
+    except Exception as e:
+        print(f"Handled specific exception: {e}")
+    finally:
+    # Code that runs no matter what
+        print("This runs after try and except blocks.")
+
+def preprocess_data(combined_data):
+    """Preprocess the combined dataset with class balance checking."""
+    try:
+        # Debug: Print columns to verify presence
+        print("Columns before preprocessing:", combined_data.columns.tolist())
+
+        # Print disaster type distribution before preprocessing
+        print("\nDisaster type distribution before preprocessing:")
+        print(combined_data['disaster_type'].value_counts())
+        print("\nPercentage distribution:")
+        print(combined_data['disaster_type'].value_counts(normalize=True) * 100)
+
+        # Handle missing values
+        combined_data = combined_data.dropna(subset=[
+            'latitude', 'longitude', 'temperature_celsius', 'precip_mm',
+            'disaster_type', 'total_deaths', 'infrastructure_loss'
+        ])
+
+        # Convert 'total_deaths' and 'infrastructure_loss' to numeric
+        combined_data['total_deaths'] = pd.to_numeric(combined_data['total_deaths'], errors='coerce').fillna(0)
+        combined_data['infrastructure_loss'] = pd.to_numeric(combined_data['infrastructure_loss'], errors='coerce').fillna(0)
+
+        # Encode 'disaster_type' as numerical labels
+        label_encoder = LabelEncoder()
+        combined_data['disaster_type_code'] = label_encoder.fit_transform(combined_data['disaster_type'])
+
+        # Print encoded classes
+        print("\nEncoded disaster types:")
+        for i, label in enumerate(label_encoder.classes_):
+            print(f"Class {i}: {label}")
+
+        # Features and target variables
+        feature_columns = ['latitude', 'longitude', 'temperature_celsius', 'precip_mm']
+        X = combined_data[feature_columns]
+        y_disaster_type = combined_data['disaster_type_code']
+        y_deaths = combined_data['total_deaths']
+        y_infra_loss = combined_data['infrastructure_loss']
+
+        return X, y_disaster_type, y_deaths, y_infra_loss, label_encoder
+
+    except Exception as e:
+        print(f"Error preprocessing data: {str(e)}")
+        traceback.print_exc()
+        sys.exit(1)
+
+def train_models(X, y_disaster_type, y_deaths, y_infra_loss):
+    """Train models with balanced class weights."""
+    try:
+        # Split data
+        X_train, X_test, y_type_train, y_type_test = train_test_split(
+            X, y_disaster_type, test_size=0.2, random_state=42, stratify=y_disaster_type)
+        _, _, y_deaths_train, y_deaths_test = train_test_split(
+            X, y_deaths, test_size=0.2, random_state=42)
+        _, _, y_infra_train, y_infra_test = train_test_split(
+            X, y_infra_loss, test_size=0.2, random_state=42)
+
+        # Print class distribution in training set
+        print("\nClass distribution in training set:")
+        print(pd.Series(y_type_train).value_counts())
+
+        # Disaster type classification model with balanced weights
+        print("\nTraining disaster type classification model...")
+        disaster_type_model = RandomForestClassifier(
+            n_estimators=100,
+            class_weight='balanced',
+            random_state=42,
+            max_depth=10  # Prevent overfitting
+        )
+        
+        disaster_type_model.fit(X_train, y_type_train)
+        
+        # Print feature importances
+        feature_columns = ['latitude', 'longitude', 'temperature_celsius', 'precip_mm']
+        print("\nFeature importances:")
+        for feature, importance in zip(feature_columns, disaster_type_model.feature_importances_):
+            print(f"{feature}: {importance:.4f}")
+
+        y_type_pred = disaster_type_model.predict(X_test)
+        type_accuracy = accuracy_score(y_type_test, y_type_pred)
+        print(f"\nDisaster Type Model Accuracy: {type_accuracy:.2f}")
+        print("Classification Report:")
+        print(classification_report(y_type_test, y_type_pred))
+
+        # Deaths regression model
+        print("\nTraining deaths regression model...")
+        deaths_model = RandomForestRegressor(n_estimators=100, random_state=42)
+        deaths_model.fit(X_train, y_deaths_train)
+        y_deaths_pred = deaths_model.predict(X_test)
+        deaths_r2 = r2_score(y_deaths_test, y_deaths_pred)
+        print(f"Deaths Model R^2: {deaths_r2:.2f}")
+
+        # Infrastructure loss regression model
+        print("\nTraining infrastructure loss regression model...")
+        infra_loss_model = RandomForestRegressor(n_estimators=100, random_state=42)
+        infra_loss_model.fit(X_train, y_infra_train)
+        y_infra_pred = infra_loss_model.predict(X_test)
+        infra_r2 = r2_score(y_infra_test, y_infra_pred)
+        print(f"Infrastructure Loss Model R^2: {infra_r2:.2f}")
+
+        return disaster_type_model, deaths_model, infra_loss_model
+
+    except Exception as e:
+        print(f"Error training models: {str(e)}")
+        traceback.print_exc()
+        sys.exit(1)
+
+def save_models(disaster_type_model, deaths_model, infra_loss_model, label_encoder, model_dir='models'):
+    """Save trained models and label encoders to disk."""
+    try:
+        if not os.path.exists(model_dir):
+            os.makedirs(model_dir)
+
+        joblib.dump(disaster_type_model, os.path.join(model_dir, 'disaster_type_model.pkl'))
+        joblib.dump(deaths_model, os.path.join(model_dir, 'deaths_model.pkl'))
+        joblib.dump(infra_loss_model, os.path.join(model_dir, 'infra_loss_model.pkl'))
+        joblib.dump(label_encoder, os.path.join(model_dir, 'label_encoder.pkl'))
+
+        print(f"\nModels saved to directory: {model_dir}")
+
+    except Exception as e:
+        print(f"Error saving models: {str(e)}")
+        traceback.print_exc()
+        sys.exit(1)
+
+if __name__ == '__main__':
+    # Paths to your datasets
+    disaster_data_path = r'C:\Users\Asus\Desktop\disaster-management-system\backend\ml\data\raw\disaster_historical_data_updated.csv'  # Update with your actual path
+    weather_data_path = r'C:\Users\Asus\Desktop\disaster-management-system\backend\ml\data\raw\GlobalWeatherRepository.csv'  # Update with your actual path
+
+    # Load and combine datasets
+    combined_data = load_and_combine_data(disaster_data_path, weather_data_path)
+
+    # Preprocess data
+    X, y_disaster_type, y_deaths, y_infra_loss, label_encoder = preprocess_data(combined_data)
+
+    # Train models
+    disaster_type_model, deaths_model, infra_loss_model = train_models(
+        X, y_disaster_type, y_deaths, y_infra_loss)
+
+    # Save models
+    save_models(disaster_type_model, deaths_model, infra_loss_model, label_encoder)
+
+    print("\nModel training complete.")
