@@ -1,0 +1,236 @@
+// api_service.js
+const BASE_URL = 'http://localhost:5000';
+ export async function getWeatherData (latitude, longitude) {
+    try {
+        const response = await fetch(`${BASE_URL}/map/?lat=${latitude}&lon=${longitude}`,{
+        method: 'GET',
+        headers: {
+            'Accept': 'application/json'
+        }
+    });
+        if (!response.ok) {
+          const errorData = await response.json();
+          console.error('Weather API Error:', errorData);
+          throw new Error(errorData.error || 'Failed to fetch weather data.');
+        }
+        const contentType = response.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+            throw new TypeError("Received non-JSON response");
+        }
+        
+        const data = await response.json();
+  
+        // Extract current temperature
+        const temperatureCelsius = data.current?.temp || null;
+  
+        // Extract precipitation (rain or snow) from daily data
+        let precipMm = 0;
+        if (data.daily && data.daily.length > 0) {
+          const dailyData = data.daily[0];
+          precipMm = dailyData.rain || dailyData.snow || 0;
+        }
+  
+        return { temperatureCelsius, precipMm };
+      } catch (error) {
+        console.error('Error fetching weather data:', error);
+        return { temperatureCelsius: null, precipMm: null };
+      }
+    }
+    export async function getDisasterPrediction({ latitude, longitude, temperatureCelsius, precipMm }) {
+        try {
+            // Convert params to numbers to ensure proper validation
+            const lat = parseFloat(latitude);
+            const lng = parseFloat(longitude);
+            const temp = parseFloat(temperatureCelsius);
+            const precip = parseFloat(precipMm);
+    
+            // Validate the coordinates
+            if (isNaN(lat) || isNaN(lng) || isNaN(temp) || isNaN(precip)) {
+                throw new Error('Invalid parameters provided');
+            }
+    
+            // Construct query parameters
+            const params = new URLSearchParams({
+                lat: lat.toFixed(6),
+                lng: lng.toFixed(6),
+                temp: temp.toFixed(2),
+                precip: precip.toFixed(2)
+            });
+    
+            const response = await fetch(`${BASE_URL}/details/?${params}`, {
+                method: 'GET',
+                headers: {
+                    'Accept': 'application/json'
+                }
+            });
+    
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Failed to fetch prediction data');
+            }
+    
+            const data = await response.json();
+            return data;
+        } catch (error) {
+            console.error('Error fetching disaster prediction:', error);
+            throw error;
+        }
+    }
+
+const handleResponse = async (response) => {
+    const contentType = response.headers.get("content-type");
+    if (!response.ok) {
+        let errorMessage = 'API request failed';
+        if (contentType && contentType.includes("application/json")) {
+            const errorData = await response.json();
+            errorMessage = errorData.error || errorMessage;
+        } else {
+            errorMessage = await response.text() || errorMessage;
+        }
+        throw new Error(errorMessage);
+    }
+    return contentType && contentType.includes("application/json")
+        ? response.json()
+        : response.text();
+};
+
+const validateCoordinates = ({ latitude, longitude }) => {
+    // Convert to numbers if they are strings
+    const lat = typeof latitude === 'string' ? parseFloat(latitude) : latitude;
+    const lng = typeof longitude === 'string' ? parseFloat(longitude) : longitude;
+
+    // Check if conversion was successful
+    if (isNaN(lat) || isNaN(lng)) {
+        throw new Error('Latitude and longitude must be valid numbers');
+    }
+
+    // Validate latitude range
+    if (lat < -90 || lat > 90) {
+        throw new Error('Latitude must be between -90 and 90 degrees');
+    }
+
+    // Validate longitude range
+    if (lng < -180 || lng > 180) {
+        throw new Error('Longitude must be between -180 and 180 degrees');
+    }
+
+    return { latitude: lat, longitude: lng };
+};
+
+const apiService = {
+    // Disaster CRUD operations
+    getDisasters: async () => {
+        const response = await fetch(`${BASE_URL}/disasters/`, {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            }
+        });
+        return handleResponse(response);
+    },
+
+    getDisasterById: async (id) => {
+        const response = await fetch(`${BASE_URL}/disasters/${id}`, {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            }
+        });
+        return handleResponse(response);
+    },
+
+    createDisaster: async (disasterData) => {
+        const response = await fetch(`${BASE_URL}/disasters/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            },
+            body: JSON.stringify(disasterData)
+        });
+        return handleResponse(response);
+    },
+
+    updateDisaster: async (id, disasterData) => {
+        const response = await fetch(`${BASE_URL}/disasters/${id}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            },
+            body: JSON.stringify(disasterData)
+        });
+        return handleResponse(response);
+    },
+
+    deleteDisaster: async (id) => {
+        const response = await fetch(`${BASE_URL}/disasters/${id}`, {
+            method: 'DELETE',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            }
+        });
+        return handleResponse(response);
+    },
+
+// Prediction operations
+    getPrediction: async (requestData) => {
+      try {
+        const response = await fetch(`/api/predictions/`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(requestData),
+        });
+  
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || 'Prediction request failed');
+        }
+  
+        const data = await response.json();
+        return data;
+      } catch (error) {
+        console.error('Prediction API Error:', error);
+        throw error;
+      }
+    },
+  
+
+    // frontend/src/services/api_service.js
+    getDisasterDetails : async ({ lat, lng, query = '' }) => {
+    try {
+        // Validate coordinates if provided
+        if (lat && lng) {
+            validateCoordinates({ 
+                latitude: parseFloat(lat), 
+                longitude: parseFloat(lng) 
+            });
+        }
+
+        const params = new URLSearchParams({
+            lat: lat || '',
+            lng: lng || '',
+            query: query
+        });
+
+        const response = await fetch(`${BASE_URL}/disaster?${params}/`, {
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            }
+        });
+
+        return handleResponse(response);
+    } catch (error) {
+        console.error('Disaster Details API Error:', error);
+        throw error;
+    }
+},
+     
+};
+
+export default apiService;
+ 

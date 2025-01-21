@@ -1,0 +1,67 @@
+disaster-management-system
+│   backend
+│   ├── config
+│   │   ├── database.py
+│   │   ├── environment.py
+│   │   
+│   │   
+│   ├── controllers
+│   │   ├── disaster_controller.py
+│   │   ├── prediction_controller.py
+│   │   └── weather_controller.py
+│   ├── middleware
+│   │   ├── error_handler.py
+│   │   └── validation_middleware.py
+│   ├── ml
+│   │   ├── models
+│   │   │   └── disaster_predictor.py
+│   │   ├── model_trainer.py
+│   │   └── models.py
+│   ├── routes
+│   │   ├── __init__.py
+│   │   ├── disaster_routes.py
+│   │   ├── prediction_routes.py
+│   │   └── weather_routes.py
+│   ├── services
+│   │   ├── openweather_service.py
+│   │   └── prediction_service.py
+│   ├── utils
+│   │   ├── data_processor.py
+│   │   └── model_evaluator.py
+│   ├── __init__.py
+│   ├── app.py
+│   └── requirements.txt
+│   data
+│   ├
+│   │   
+│   │   
+│   └── raw
+│       └── disaster_historical_data.csv
+|       |---GlobalWeatherRepository.csv      
+│   frontend
+│   ├── public
+│   │   └── index.html
+│   ├── src
+│   │   ├── components
+│   │   │   ├── DisasterDetails.js
+│   │   │   ├── DisasterPredictionChart.js
+│   │   │   ├── SearchBar.js
+│   │   │   └── WorldMap.js
+│   │   ├── pages
+│   │   │   ├── DetailsPage.js
+│   │   │   ├── HomePage.js
+│   │   │   └── MapPage.js
+│   │   ├── services
+│   │   │   └── api_service.js
+│   │   ├── utils
+│   │   │   └── map_utils.js
+│   │   └── index.js
+│   ├── styles
+│   │   └── main.css
+│   ├── package-lock.json
+│   └── package.json
+│   ml_models
+│   ├── disaster_prediction_model.pkl
+│   └── model_metadata.json
+│   .env
+│   architecture.txt
