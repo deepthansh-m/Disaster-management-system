@@ -1,0 +1,7 @@
+latitude
+longitude
+temperature_celsius
+precip_mm
+pressure_mb
+humidity
+wind_kph
